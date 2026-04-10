@@ -31,10 +31,38 @@ body {
     padding: 1rem;
 }
 
-/* Remove glow orbs completely */
+/* Premium Glow Orbs */
 .glow-orb {
-    display: none;
+    position: fixed;
+    width: 600px;
+    height: 600px;
+    border-radius: 50%;
+    filter: blur(100px);
+    opacity: 0.12;
+    z-index: -1;
+    pointer-events: none;
+    transition: opacity 1s ease;
 }
+
+.orb-1 {
+    top: -200px;
+    right: -200px;
+    background: radial-gradient(circle, var(--primary), transparent 70%);
+    animation: float-slow 20s infinite alternate ease-in-out;
+}
+
+.orb-2 {
+    bottom: -200px;
+    left: -200px;
+    background: radial-gradient(circle, var(--success), transparent 70%);
+    animation: float-slow 25s infinite alternate-reverse ease-in-out;
+}
+
+@keyframes float-slow {
+    0% { transform: translate(0, 0) scale(1); }
+    100% { transform: translate(60px, 120px) scale(1.1); }
+}
+
 
 /* Layout */
 .app-container {
@@ -433,6 +461,90 @@ input::placeholder {
 
 .primary-btn:active {
     transform: scale(0.96);
+}
+
+/* Low Quality Popup - Liquid Glass */
+.quality-popup-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.1);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 1000;
+    padding: 1.5rem;
+    animation: fadeIn 0.3s ease-out;
+}
+
+.liquid-glass-card {
+    background: rgba(255, 255, 255, 0.6);
+    backdrop-filter: blur(25px);
+    -webkit-backdrop-filter: blur(25px);
+    border: 1px solid rgba(255, 255, 255, 0.4);
+    border-radius: 28px;
+    padding: 2.5rem;
+    max-width: 420px;
+    width: 100%;
+    text-align: center;
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.08), 0 1px 1px rgba(255, 255, 255, 0.5) inset;
+    animation: slideUpSpring 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+.popup-icon {
+    width: 60px;
+    height: 60px;
+    background: #ff3b30;
+    color: white;
+    border-radius: 18px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    margin: 0 auto 1.5rem;
+    box-shadow: 0 8px 16px rgba(255, 59, 48, 0.2);
+}
+
+.liquid-glass-card h3 {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin-bottom: 0.8rem;
+    letter-spacing: -0.02em;
+}
+
+.liquid-glass-card p {
+    color: var(--text-secondary);
+    line-height: 1.5;
+    margin-bottom: 2rem;
+}
+
+.reupload-btn {
+    width: 100%;
+    background: var(--text-primary);
+    color: white;
+    border: none;
+    border-radius: 16px;
+    padding: 1rem;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.reupload-btn:hover {
+    transform: scale(0.98);
+    background: #000;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+@keyframes slideUpSpring {
+    from { transform: translateY(20px) scale(0.95); opacity: 0; }
+    to { transform: translateY(0) scale(1); opacity: 1; }
 }
 
 @media (max-width: 768px) {

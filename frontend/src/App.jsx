@@ -19,6 +19,7 @@ function App() {
   const [cardType, setCardType] = useState('Business');
   const [isDragOver, setIsDragOver] = useState(false);
   const [animatedFields, setAnimatedFields] = useState({});
+  const [showQualityPopup, setShowQualityPopup] = useState(false);
 
   const fileInputRef = useRef(null);
 
@@ -126,11 +127,49 @@ function App() {
           }
           src.delete(); dst.delete(); contours.delete(); hierarchy.delete();
           resolve(file);
-        } catch(e) { resolve(file); }
+        } catch { resolve(file); }
       };
       const reader = new FileReader();
       reader.onload = (e) => { img.src = e.target.result; };
       reader.onerror = () => resolve(file);
+      reader.readAsDataURL(file);
+    });
+  };
+
+  const detectBlur = (file) => {
+    return new Promise((resolve) => {
+      if (!window.cv || !window.cv.Mat) return resolve(false);
+
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const cv = window.cv;
+          let src = cv.imread(img);
+          let gray = new cv.Mat();
+          cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY, 0);
+          
+          let laplacian = new cv.Mat();
+          cv.Laplacian(gray, laplacian, cv.CV_64F);
+          
+          let mean = new cv.Mat();
+          let stddev = new cv.Mat();
+          cv.meanStdDev(laplacian, mean, stddev);
+          
+          const variance = stddev.data64F[0] * stddev.data64F[0];
+          console.log("Image Blur Variance:", variance);
+          
+          // Threshold: < 100 is typically blurry. Adjusting to 150 for business cards.
+          const isBlurry = variance < 150;
+          
+          src.delete(); gray.delete(); laplacian.delete(); mean.delete(); stddev.delete();
+          resolve(isBlurry);
+        } catch (e) {
+          console.error("Blur detection error:", e);
+          resolve(false);
+        }
+      };
+      const reader = new FileReader();
+      reader.onload = (e) => { img.src = e.target.result; };
       reader.readAsDataURL(file);
     });
   };
@@ -144,6 +183,15 @@ function App() {
     }
 
     if (file.type.startsWith('image/')) {
+        // Step 1: Detect Blur
+        setStatus('Checking image quality...');
+        const isBlurry = await detectBlur(file);
+        if (isBlurry) {
+            setShowQualityPopup(true);
+            setStatus('Upload halted');
+            return;
+        }
+
       const croppedFile = await autoCropImage(file);
       const reader = new FileReader();
       reader.onload = (e) => {
@@ -188,6 +236,16 @@ function App() {
       const result = await response.json();
 
       if (result.success && result.data) {
+        if (result.lowQuality) {
+            setStatus('Low Quality Image Detected');
+            setStatusClass('error');
+            setTimeout(() => {
+                alert('⚠️ Low Quality Detected: The image appears blurry or poor quality. Please re-upload a clearer image for better results.');
+                resetUI();
+            }, 100);
+            return;
+        }
+
         setCardType(result.data.cardType || 'Business');
         
         const extractedKeys = ['full_name', 'company', 'designation', 'email', 'phone', 'aadhaarNumber', 'panNumber', 'dob', 'gender'];
@@ -234,6 +292,25 @@ function App() {
     <>
       <div className="glow-orb orb-1"></div>
       <div className="glow-orb orb-2"></div>
+
+      {showQualityPopup && (
+          <div className="quality-popup-overlay">
+              <div className="liquid-glass-card">
+                  <div className="popup-icon">
+                      <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                          <circle cx="12" cy="12" r="10"></circle>
+                          <line x1="12" y1="8" x2="12" y2="12"></line>
+                          <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                      </svg>
+                  </div>
+                  <h3>Low Quality Image</h3>
+                  <p>The image appears blurry or low quality. Please upload a clear business card image for accurate extraction.</p>
+                  <button className="reupload-btn" onClick={() => { setShowQualityPopup(false); resetUI(); }}>
+                      Re-upload
+                  </button>
+              </div>
+          </div>
+      )}
 
       <main className="app-container">
         <header className="app-header">

@@ -16,23 +16,82 @@ app.use(express.json());
 const storage = multer.memoryStorage();
 const upload = multer({ storage: storage });
 
-// Levenshtein Matrix Algorithm
-function levenshteinDistance(a, b) {
-    const matrix = [];
-    if (a.length === 0) return b.length;
-    if (b.length === 0) return a.length;
-    for (let i = 0; i <= b.length; i++) matrix[i] = [i];
-    for (let j = 0; j <= a.length; j++) matrix[0][j] = j;
-    for (let i = 1; i <= b.length; i++) {
-        for (let j = 1; j <= a.length; j++) {
-            if (b.charAt(i - 1) === a.charAt(j - 1)) {
-                matrix[i][j] = matrix[i - 1][j - 1];
-            } else {
-                matrix[i][j] = Math.min(matrix[i - 1][j - 1] + 1, Math.min(matrix[i][j - 1] + 1, matrix[i - 1][j] + 1));
-            }
+// Health check route
+app.get('/', (req, res) => {
+    res.send('OCR Backend is running!');
+});
+
+// Generic OCR Post-Processing Utilities
+function splitCamelCase(text) {
+    if (!text) return '';
+    // Insert space before capital letters that follow a lowercase letter or number
+    return text.replace(/([a-z0-9])([A-Z])/g, '$1 $2').trim();
+}
+
+function toTitleCase(text) {
+    if (!text) return '';
+    const meaningfulShorts = ['BD', 'HR', 'IT', 'VP', 'MD', 'CEO', 'CTO', 'CFO', 'COO', 'GM', 'DR', 'AVP', 'SVP', 'DGM'];
+    return text.split(' ').map(word => {
+        const clean = word.replace(/[^a-zA-Z]/g, '');
+        if (meaningfulShorts.includes(clean.toUpperCase())) {
+            // Preserve the original symbols but capitalize the abbreviation
+            return word.toUpperCase();
         }
+        // If it's already uppercase acronym (2-3 letters), keep it
+        if (clean.length >= 2 && clean.length <= 3 && clean === clean.toUpperCase() && clean.match(/^[A-Z]+$/)) {
+            return word;
+        }
+        return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+    }).join(' ');
+}
+
+function isMeaningfulWord(word) {
+    if (!word) return false;
+    // Allow common separators and punctuation found in designations
+    if (['-', '&', '|', '/', '\\', '(', ')', ','].includes(word.trim())) return true;
+    
+    const cleanWord = word.replace(/[^a-zA-Z]/g, '');
+    if (!cleanWord) return false;
+
+    const meaningfulShorts = ['BD', 'HR', 'IT', 'VP', 'MD', 'CEO', 'CTO', 'CFO', 'COO', 'GM', 'DR', 'AVP', 'SVP', 'DGM'];
+    
+    // Keep if in known meaningful abbreviations list
+    if (meaningfulShorts.includes(cleanWord.toUpperCase())) return true;
+    
+    // Keep if it's 2-3 letters and ALL CAPS (likely an acronym/abbreviation)
+    if (cleanWord.length >= 2 && cleanWord.length <= 3 && cleanWord === cleanWord.toUpperCase()) {
+        return true;
     }
-    return matrix[b.length][a.length];
+
+    // Remove random lowercase short words (e.g., "po", "ee")
+    if (cleanWord.length < 3) return false;
+    
+    // Word should have at least one vowel to be readable (heuristic for longer noise)
+    if (!/[aeiouyAEIOUY]/.test(cleanWord) && cleanWord.length > 3) return false;
+    return true;
+}
+
+function cleanNoise(text) {
+    if (!text) return '';
+    const words = text.split(/\s+/);
+    const cleanedWords = words.filter(word => {
+        // Remove words with too many numbers or symbols
+        const lettersCount = (word.match(/[a-zA-Z]/g) || []).length;
+        if (lettersCount / word.length < 0.5 && word.length > 2) return false;
+        return isMeaningfulWord(word);
+    });
+    return cleanedWords.join(' ').trim();
+}
+
+function extractCompanyFromEmail(email) {
+    if (!email || !email.includes('@')) return '';
+    const domain = email.split('@')[1];
+    const companyPart = domain.split('.')[0];
+    if (['gmail', 'yahoo', 'outlook', 'hotmail', 'icloud', 'live', 'aol', 'mail'].includes(companyPart.toLowerCase())) {
+        return '';
+    }
+    // Capitalize domain part
+    return companyPart.charAt(0).toUpperCase() + companyPart.slice(1);
 }
 
 // Extraction algorithms using Context and Validation rules
@@ -80,102 +139,69 @@ function extractDataFromText(text) {
         conf.phone = 0.95;
     }
 
-    // 3. Contextual Name, Title, and Company extraction based on clusters
+    // 3. Name, Title, and Company extraction based on clusters
     const titleKeywords = ['manager', 'director', 'president', 'ceo', 'cfo', 'cto', 'founder', 'owner', 'head', 'vp', 'executive', 'engineer', 'developer', 'consultant', 'architect', 'supervisor', 'specialist', 'officer', 'representative', 'lead'];
-    const companyKeywords = ['ltd', 'inc', 'solutions', 'technologies', 'tech', 'group', 'corp', 'company', 'co', 'pvt', 'private'];
     
     let nameFound = false;
 
-    // First scan to find Designation natively
+    // Designation extraction
     for (let line of lines) {
         const lowerLine = line.toLowerCase();
         let isTitle = titleKeywords.some(kw => lowerLine.includes(kw));
         if (isTitle && !designation) {
-            designation = line.replace(/[^a-zA-Z\s.\-&]/g, '').trim();
-            conf.designation = 0.9;
+            // Inclusive regex to allow symbols found in full designations
+            let potentialDesignation = line.replace(/[^a-zA-Z0-9\s.\-&/|(),]/g, '').trim();
+            designation = toTitleCase(cleanNoise(potentialDesignation));
+            if (designation) conf.designation = 0.9;
         }
     }
 
     for (let line of lines) {
         if (line.match(emailRegex) || line.includes('@') || line.match(phoneRegex)) continue;
-        if (line.length < 4 || line.length > 35) continue;
+        if (line.length < 4 || line.length > 50) continue;
         
         const lowerLine = line.toLowerCase();
         let isTitle = titleKeywords.some(kw => lowerLine.includes(kw));
         
         // Find Name
         if (!nameFound && !isTitle) {
-            let clean = line.replace(/[^a-zA-Z\s.\-]/g, '').replace(/\s+/g, ' ').trim();
-            let words = clean.split(' ');
-            const validSuffixes = ['jr', 'sr', 'md', 'phd', 'cpa', 'ii', 'iii', 'iv'];
+            let cleanLine = line.replace(/[^a-zA-Z\s.\-]/g, '').trim();
+            if (cleanLine.length < 3) continue;
+
+            let words = cleanLine.split(/\s+/).map(w => splitCamelCase(w));
+            let fullNameCandidate = words.join(' ');
+            fullNameCandidate = cleanNoise(fullNameCandidate);
             
-            while (words.length >= 2) {
-                const last = words[words.length - 1];
-                if (last.length <= 2 && !validSuffixes.includes(last.toLowerCase()) && !last.includes('.')) {
-                    words.pop();
-                } else {
-                    break;
-                }
+            if (fullNameCandidate && fullNameCandidate.split(' ').length >= 1) {
+                full_name = toTitleCase(fullNameCandidate);
+                nameFound = true;
+                conf.full_name = 0.85;
+                continue;
             }
-            
-            full_name = words.join(' ');
-            nameFound = true;
-            conf.full_name = 0.85;
-            continue;
         }
 
-        // Find Company
-        if (nameFound && !isTitle) {
+        // Find Company (Legacy OCR fallback)
+        if (nameFound && !isTitle && !company) {
             let potentialCompany = line.replace(/[^a-zA-Z0-9\s.\-&,]/g, '').trim();
-            if (potentialCompany.length < 3) continue;
-            
-            if (companyKeywords.some(kw => potentialCompany.toLowerCase().includes(kw))) {
-                company = potentialCompany;
-                conf.company = 0.9;
-                break;
-            }
-            
-            if (!company) {
+            potentialCompany = toTitleCase(cleanNoise(potentialCompany));
+            if (potentialCompany.length > 3) {
                 company = potentialCompany;
                 conf.company = 0.5;
             }
         }
     }
 
-    // 4. Validation & Error Correction Layer (Fuzzy Logic)
-    let emailDomain = '';
-    if (email) {
-        const domainParts = email.split('@')[1].split('.');
-        emailDomain = domainParts[0].toLowerCase();
-    }
-
-    if (company && emailDomain) {
-        let cleanCompany = company.toLowerCase().replace(/[^a-z0-9]/g, '');
-        // Example: emailDomain = seetechsolutions, cleanCompany = seetech
-        // Or if OCR failed: cleanCompany = seciech
-        
-        // If the domain contains the OCR company exactly, bump confidence
-        if (emailDomain.includes(cleanCompany)) {
-            conf.company = 0.95;
+    // 4. Validation & Error Correction Layer (Fuzzy Logic & Email Source of Truth)
+    const companyFromEmail = extractCompanyFromEmail(email);
+    if (companyFromEmail) {
+        // Domain is the source of truth if OCR company is noisy or consistent
+        if (!company || company.toLowerCase().includes(companyFromEmail.toLowerCase()) || companyFromEmail.toLowerCase().includes(company.toLowerCase().replace(/\s+/g, ''))) {
+            company = companyFromEmail;
+            conf.company = 0.99;
         } else {
-            // Apply Levenshtein distance check if it didn't match perfectly
-            let distance = levenshteinDistance(emailDomain, cleanCompany);
-            let similarity = 1 - (distance / Math.max(emailDomain.length, cleanCompany.length));
-            
-            // If it's a typo mismatch, correct it via Ground Truth override
-            if (similarity > 0.3 && similarity < 1.0) {
-                 // The domain is the ground truth. We build a clean string.
-                 let fixed = emailDomain.charAt(0).toUpperCase() + emailDomain.slice(1);
-                 
-                 // If original company had 'solutions' etc, preserve it in the fix
-                 let originalTokens = company.split(' ');
-                 if (originalTokens.length > 1) {
-                     fixed = fixed + ' ' + originalTokens.slice(1).join(' ');
-                 }
-                 
-                 company = fixed;
-                 conf.company = 0.99; // Highly confident because cross-validated!
-            }
+            // If they are vastly different, still trust email domain if it's a solid company name
+            company = companyFromEmail;
+            conf.company = 0.95;
         }
     }
 
@@ -186,7 +212,19 @@ function extractDataFromText(text) {
     // Evaluate if it's Aadhaar/PAN based on ID traits to maintain backward compatibility smoothly
     const rawTextLower = text.toLowerCase();
     if (rawTextLower.includes('income tax department') || text.match(/[A-Z]{5}[0-9]{4}[A-Z]{1}/)) {
-        return { cardType: 'PAN', panNumber: (text.match(/[A-Z]{5}[0-9]{4}[A-Z]{1}/) || [])[0], rawText: text };
+        const panMatch = text.match(/[A-Z]{5}[0-9]{4}[A-Z]{1}/);
+        const panNumber = panMatch ? panMatch[0] : '';
+        
+        // Attempt to extract name for PAN - usually on line 3 or 4
+        const panLines = lines.filter(l => !l.toLowerCase().includes('income tax') && !l.toLowerCase().includes('permanent account number') && !l.match(/[A-Z]{5}[0-9]{4}[A-Z]{1}/));
+        let panName = panLines.length > 0 ? toTitleCase(cleanNoise(panLines[0])) : '';
+        
+        return { 
+            cardType: 'PAN', 
+            panNumber, 
+            full_name: panName,
+            rawText: text 
+        };
     }
 
     // Return the specified Target JSON Output format exactly as requested:
@@ -209,6 +247,7 @@ app.post('/api/scan-card', upload.single('card'), async (req, res) => {
         console.log(`Received file: ${req.file.originalname}, processing offline...`);
 
         let text = '';
+        let bestScore = 100; // Default high for non-image files (PDF/DOCX are usually high quality text)
         const mimeType = req.file.mimetype;
         const originalName = req.file.originalname.toLowerCase();
 
@@ -217,7 +256,7 @@ app.post('/api/scan-card', upload.single('card'), async (req, res) => {
             let originalImageBuffer = req.file.buffer;
             let currentImage = await Jimp.read(originalImageBuffer);
             
-            let bestScore = -1;
+            bestScore = -1;
             let bestText = '';
             let bestAngle = 0;
 
@@ -272,9 +311,18 @@ app.post('/api/scan-card', upload.single('card'), async (req, res) => {
 
         const extractedData = extractDataFromText(text);
 
+        // Quality Check: If no name is found or score is extremely low, flag as low quality
+        let isLowQuality = false;
+        if (!extractedData.full_name && bestScore < 10) {
+            isLowQuality = true;
+        } else if (bestScore < 5) {
+            isLowQuality = true;
+        }
+
         res.json({
             success: true,
-            data: extractedData
+            data: extractedData,
+            lowQuality: isLowQuality
         });
     } catch (error) {
         console.error('Processing Error:', error);
@@ -282,6 +330,6 @@ app.post('/api/scan-card', upload.single('card'), async (req, res) => {
     }
 });
 
-app.listen(port, () => {
-    console.log(`[Offline OCR Service] API running fully locally at http://localhost:${port}`);
+app.listen(port, '0.0.0.0', () => {
+    console.log(`[Offline OCR Service] API running on http://0.0.0.0:${port}`);
 });

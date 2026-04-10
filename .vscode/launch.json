@@ -1,22 +1,31 @@
 {
-    // Use IntelliSense to learn about possible attributes.
-    // Hover to view descriptions of existing attributes.
-    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Python Debugger: Current File",
-            "type": "debugpy",
+            "name": "Backend: Node.js Server",
+            "type": "node",
             "request": "launch",
-            "program": "${file}",
+            "program": "${workspaceFolder}/backend/server.js",
+            "cwd": "${workspaceFolder}/backend",
             "console": "integratedTerminal"
         },
         {
+            "name": "Frontend: Vite (Chrome)",
             "type": "chrome",
             "request": "launch",
-            "name": "Launch Chrome to debug React Frontend",
             "url": "http://localhost:5173",
-            "webRoot": "${workspaceFolder}/frontend/src"
+            "webRoot": "${workspaceFolder}/frontend/src",
+            "preLaunchTask": "Start Frontend"
+        }
+    ],
+    "compounds": [
+        {
+            "name": "Full Stack App",
+            "configurations": [
+                "Backend: Node.js Server",
+                "Frontend: Vite (Chrome)"
+            ],
+            "stopAll": true
         }
     ]
 }
