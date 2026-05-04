@@ -1,0 +1,8 @@
+{
+  "name": "ElectraPF Pulse",
+  "description": "High-end power analytics layer for intelligent electricity bill deconstruction and Power Factor optimization. Features AI-driven reactive load analysis and professional report generation.",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": []
+}
